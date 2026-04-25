@@ -1,0 +1,10 @@
+{
+  "total_records": 800,
+  "total_clusters": 744,
+  "auto_resolved": 0,
+  "needs_review": 43,
+  "singletons": 701,
+  "records_merged_into_auto": 0,
+  "records_in_review": 99,
+  "dedup_rate_pct": 7.0
+}
