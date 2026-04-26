@@ -116,6 +116,22 @@ BUSINESS_ORG_RULE = ResolverRule(
     blocking_prefix_len=4,
 )
 
+PRODUCT_RULE = ResolverRule(
+    name="products",
+    types=["Product"],
+    blocking_field="name",
+    blocking_normalize="business_name",   # same normaliser handles legal-suffix-style stripping
+    blocking_prefix_len=8,                 # product names are longer; need more chars to avoid huge blocks
+)
+
+POLICY_RULE = ResolverRule(
+    name="policies",
+    types=["Policy"],
+    blocking_field="title",
+    blocking_normalize="business_name",   # strips legal-suffixes; harmless for titles
+    blocking_prefix_len=4,
+)
+
 
 # ---------------------------------------------------------------------------
 # Match strategies
@@ -139,25 +155,34 @@ def _strat_tax_id(a: dict, b: dict) -> Optional[Signal]:
     return None
 
 
+def _get_name(node_data: dict) -> str:
+    """Generic name lookup — falls back across known name fields per entity type."""
+    p = _props(node_data)
+    for key in ("business_name", "name", "product_name", "vendor_name", "title"):
+        v = p.get(key)
+        if v:
+            return v
+    return ""
+
+
 def _strat_business_name_exact(a: dict, b: dict) -> Optional[Signal]:
-    na = normalize_business_name(_props(a).get("business_name"))
-    nb = normalize_business_name(_props(b).get("business_name"))
+    na = normalize_business_name(_get_name(a))
+    nb = normalize_business_name(_get_name(b))
     if na and nb and na == nb:
-        original_a = _props(a).get("business_name")
-        return Signal(0.55, f"Exact normalized business_name ({original_a})")
+        return Signal(0.55, f"Exact normalized name ({_get_name(a)!r})")
     return None
 
 
 def _strat_business_name_fuzzy(a: dict, b: dict) -> Optional[Signal]:
-    na = normalize_business_name(_props(a).get("business_name"))
-    nb = normalize_business_name(_props(b).get("business_name"))
+    na = normalize_business_name(_get_name(a))
+    nb = normalize_business_name(_get_name(b))
     if not na or not nb or na == nb:
         return None
     sim = similarity(na, nb)
     if sim >= 0.92:
         return Signal(0.45,
             f"Near-exact name match ({sim:.0%}): "
-            f"'{_props(a).get('business_name')}' vs '{_props(b).get('business_name')}'")
+            f"{_get_name(a)!r} vs {_get_name(b)!r}")
     if sim >= 0.80:
         return Signal(0.25, f"Fuzzy name match ({sim:.0%})")
     return None
@@ -399,10 +424,13 @@ def flag_review(graph: nx.MultiDiGraph, member_ids: list[str],
             {
                 "id": mid,
                 "type": _node_type(graph, mid),
-                "business_name": _props(graph.nodes[mid]).get("business_name"),
+                # `business_name` for back-compat; new `name` field is canonical
+                "name": _get_name(graph.nodes[mid]),
+                "business_name": _props(graph.nodes[mid]).get("business_name") or _get_name(graph.nodes[mid]),
                 "tax_id": _props(graph.nodes[mid]).get("tax_id"),
                 "registered_address": _props(graph.nodes[mid]).get("registered_address"),
                 "industry": _props(graph.nodes[mid]).get("industry"),
+                "category": _props(graph.nodes[mid]).get("category"),
             }
             for mid in member_ids
         ],
@@ -420,7 +448,13 @@ def flag_review(graph: nx.MultiDiGraph, member_ids: list[str],
 # ---------------------------------------------------------------------------
 
 def _block_key(props: dict, rule: ResolverRule) -> str:
+    # Try the rule's chosen field first; fall back to other common name keys.
     raw = props.get(rule.blocking_field)
+    if not raw:
+        for fallback in ("business_name", "name", "product_name", "title"):
+            if fallback != rule.blocking_field and props.get(fallback):
+                raw = props[fallback]
+                break
     if rule.blocking_normalize == "business_name":
         norm = normalize_business_name(raw)
     elif rule.blocking_normalize == "address":
@@ -639,8 +673,8 @@ def main() -> int:
     parser.add_argument("--output", default=None,
                         help="Path to write resolved graph (default: <graph>.resolved.json)")
     parser.add_argument("--rule", default="business_orgs",
-                        choices=["business_orgs"],
-                        help="Which resolver rule to apply")
+                        choices=["business_orgs", "products", "policies", "all"],
+                        help="Which resolver rule(s) to apply")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -652,8 +686,15 @@ def main() -> int:
           f"{len(graph.graph.get('conflicts', []))} pre-existing conflicts")
     print()
 
-    rule = {"business_orgs": BUSINESS_ORG_RULE}[args.rule]
-    stats = resolve_entities(graph, rule=rule, verbose=args.verbose)
+    rule_map = {"business_orgs": [BUSINESS_ORG_RULE],
+                "products": [PRODUCT_RULE],
+                "policies": [POLICY_RULE],
+                "all": [BUSINESS_ORG_RULE, PRODUCT_RULE, POLICY_RULE]}
+    rules = rule_map[args.rule]
+    last_stats = None
+    for r in rules:
+        last_stats = resolve_entities(graph, rule=r, verbose=args.verbose)
+    stats = last_stats.as_dict() if last_stats else {}
 
     save_graph(graph, out_path)
 
@@ -662,7 +703,7 @@ def main() -> int:
     print("RESOLVER COMPLETE")
     print("=" * 60)
     import json
-    print(json.dumps(stats.as_dict(), indent=2))
+    print(json.dumps(stats, indent=2, default=str))
     return 0
 
 

@@ -1,133 +1,98 @@
-# Qontext-winner
+# Qontext
 
-Entity-resolution work for the Qontext hackathon, exploring how to dedupe and link
-business records across heterogeneous enterprise sources (clients ↔ vendors).
-The dataset is the public **AST-FRI/EnterpriseBench** dataset on HuggingFace.
+A persistent, inspectable **company context base** built from the AST-FRI / EnterpriseBench dataset.
 
-The repo evolved through three layers, all kept here so the trajectory is visible:
+This repo consolidates the work originally split across:
+- `Jannik098/qontext` (backend ingestion + graph)
+- `jHeizmann33/qontext-enhanced` (React frontend)
+- `jHeizmann33/Qontext-winner` (entity-resolution submission, archived on the `legacy-hackathon` branch)
+
+## What it is
+
+Qontext turns a company's fragmented data — HR systems, CRM, emails, tickets, GitHub, policies — into a structured **knowledge graph** with per-fact provenance, a **virtual file system** that an AI or human can browse like Markdown, and **edit / extend** endpoints so humans can correct or annotate facts without ever touching the underlying source data.
+
+Three things distinguish it from "RAG over a folder":
+
+1. **Per-fact provenance.** Every property on every node carries source/file/record-id. Edits and human notes get their own `Human/vfs_edit` or `Human/vfs_note` provenance, so you always know who said what.
+2. **Conflict resolution that involves humans only when it matters.** A rules layer (`ingestion/resolver.py`) auto-resolves easy cases; an LLM layer (`ingestion/llm_resolver.py`) reasons about the ambiguous ones; anything still uncertain lands in a review queue with full evidence and proposed actions.
+3. **VFS as a navigable surface.** Pages cross-link via Markdown (`[Aguilar Inc](/clients/{id})`), notes attach as first-class `Note` nodes via an `annotates` edge, and edits are auditable through `graph.conflicts`.
+
+## Architecture
 
 ```
-.
-├── ingestion/              ← primary deliverable: graph-based entity resolver
-│   ├── resolver.py         ← cross-source entity resolution (clusters, merges, same_as edges)
-│   ├── normalize.py        ← string normalisation helpers
-│   ├── graph_utils.py      ← NetworkX graph + provenance helpers (from Jannik098/qontext)
-│   └── ingest_bm.py        ← Business_and_Management ingester (from Jannik098/qontext)
-│
-├── pipeline/               ← earlier exploration: standalone Python pipeline
-│   │                          (no graph, just rules + JSON in/out)
-│   ├── load.py
-│   ├── normalize.py
-│   ├── strategies.py
-│   ├── resolver.py
-│   └── run.py
-│
-├── prompts/                ← LLM resolver prompt for ambiguous cases (not yet wired)
-│   └── resolver.business_and_management.md
-│
-├── output/                 ← result artefacts from the standalone pipeline run
-│   ├── report.md
-│   ├── stats.json
-│   ├── review_queue.json
-│   └── singletons.json
-│
-└── src/, index.html, ...   ← Vite + React + TS demo (initial UI sketch with sample data)
+Raw sources ──▶ ingestion/ ──▶ NetworkX graph ──▶ api/ ──▶ frontend/
+                  (per-fact            │              │
+                   provenance)         │              ├─ /vfs/{path}        browse
+                                       │              ├─ /retrieve          hybrid graph + TF-IDF
+                                       │              ├─ /conflicts         review queue
+                                       │              ├─ PATCH /vfs/...     human edit
+                                       │              └─ POST /vfs/.../notes  extend
+                                       │
+                                       └─ resolver + LLM resolver + detectors
+                                          ↓
+                                          graph.conflicts (auto-resolved + pending_review)
 ```
 
-## What the resolver does
+## Repository layout
 
-`ingestion/resolver.py` runs after source ingesters have populated a NetworkX
-knowledge graph. The standard `add_node()` only catches conflicts when the
-*same* `node_id` is added twice; the resolver catches the harder case:
-**two records with different `node_id`s that refer to the same real-world
-entity**.
+```
+api/                 FastAPI server, VFS generator, hybrid retriever, Cognee export
+ingestion/           Per-source ingesters, resolver, LLM resolver, detectors, risk policy
+docs/                CONTEXT, DECISIONS, LEARNINGS, RESOLVER, RETRIEVAL, TODO
+tests/               Pytest suite for resolver, detectors, risk, proposals
+frontend/            Vite + React + Tailwind UI (graph view, file browser, conflict queue)
+run_qontext_api.py   Convenience launcher for the FastAPI server
+```
 
-Example from the EnterpriseBench data:
-- `Client:3a578a8e-a948-...` from `clients.json` (UUID-based)
-- `Vendor:vendor_285` from `vendors.json` (positional id)
-- Both are "Hickman Ltd" — same business, different relationship roles.
+## Quick start
 
-Decision per cluster:
-
-| Cluster shape                | Confidence      | Action                                                    |
-|------------------------------|-----------------|-----------------------------------------------------------|
-| Same type (Client + Client)  | ≥ 0.85          | **Merge** — properties combined, edges rewired, alias dropped |
-| Cross type (Client + Vendor) | ≥ 0.75          | **`same_as` edge** — keep distinct (per architecture decision D001) |
-| Any cluster                  | < threshold     | Flag in `graph.conflicts` for human review + linked with `status: needs_review` |
-| Identifier disagreement      | (e.g. tax_id)   | Score capped at 0.55 → review queue, never auto-merged    |
-
-Eight match strategies feed into a noisy-OR score: `tax_id`, exact normalised
-name, fuzzy name (SequenceMatcher), address, ZIP+address, industry, contact
-email, phone, representative employee.
-
-## How to run
-
-You'll need the EnterpriseBench data locally first (it's a gated HF dataset):
+### Backend
 
 ```bash
-pip install huggingface_hub networkx
-hf auth login                                  # use a Read token
+pip install fastapi uvicorn networkx pydantic
+hf auth login                              # AST-FRI/EnterpriseBench is a gated dataset
+hf download AST-FRI/EnterpriseBench --repo-type dataset --local-dir ./Dataset
 
-hf download AST-FRI/EnterpriseBench \
-  Business_and_Management/clients.json \
-  Business_and_Management/vendors.json \
-  --repo-type dataset \
-  --local-dir ./EnterpriseBench-data
-```
-
-Then build a graph and run the resolver:
-
-```bash
+# Build the graph from all sources
 cd ingestion
+python run_all.py --data-dir ../Dataset --output ../full_with_policies_resolved.json --verbose
 
-# 1) Ingest B&M into a NetworkX graph
-python ingest_bm.py \
-  --data-dir ../EnterpriseBench-data \
-  --output ../bm_graph.json
-
-# 2) Run cross-source entity resolution
-python resolver.py \
-  --graph ../bm_graph.json \
-  --output ../bm_graph.resolved.json \
-  --verbose
+# Start the API
+cd ../api
+python server.py --graph ../full_with_policies_resolved.json
+# Browse http://localhost:8000/docs
 ```
 
-Expected output on the full B&M dataset (400 clients + 400 vendors):
+### Frontend
 
+```bash
+cd frontend
+bun install            # or: npm install
+bun dev                # or: npm run dev
 ```
-Compared 737 pairs in-block, 76 above link threshold (50%)
-Found 45 multi-member clusters (out of 738 total groups)
--> 0 merges, 172 same_as edges added, 45 clusters flagged for review
-```
 
-The 45 review clusters include matches like:
-- `Hickman Ltd` (Client, Education) ↔ `Hickman Inc` (Vendor, Hospitality)
-- `Hogan PLC` ↔ `Hogan Corp` (both Education)
-- a 6-member `Johnson` cluster (5 Clients + 1 Vendor across 6 different industries
-  — likely distinct businesses sharing a common surname)
+## Key endpoints
 
-The resolver intentionally refuses to auto-merge any of them because every
-candidate pair has a `tax_id` mismatch — this is the conservative behaviour the
-hackathon judging criteria reward ("auto-resolve easy conflicts, surface
-ambiguous ones for humans").
+| Endpoint | Purpose |
+|---|---|
+| `GET /vfs/`                          | Root directory of the virtual file system |
+| `GET /vfs/people/{emp_id}`           | Stitched employee profile (HR + emails + tickets + clients) |
+| `GET /vfs/policies/{slug}`           | Policy with category, summary, full text, notes |
+| `GET /retrieve?q=...&mode=hybrid`    | Graph-grounded retrieval for AI consumption |
+| `GET /conflicts?status=pending_review` | Human-review queue |
+| `PATCH /vfs/{section}/{id}`          | Apply a human edit to any property; carries `Human/vfs_edit` provenance |
+| `POST /vfs/{section}/{id}/notes`     | Attach a `Note` node via `annotates`; surfaces on the entity page and is retrievable |
 
-## Folder origins & attribution
+## Ingestion sources covered
 
-- `ingestion/graph_utils.py` and `ingestion/ingest_bm.py` come from
-  **[Jannik098/qontext](https://github.com/Jannik098/qontext)** — the upstream
-  hackathon repository — and are needed as runtime dependencies of the resolver.
-  They are unmodified.
-- `ingestion/resolver.py` and `ingestion/normalize.py` were built here and
-  contributed back upstream as Phase 5 of the qontext pipeline.
-- `pipeline/`, `prompts/`, `output/`, `src/` are this repo's earlier
-  experimentation — kept for reference.
+HR (employees + résumés), CRM (customers, products, sales, reviews, support chats), B&M (clients, vendors), Mail, Collaboration, IT tickets, GitHub, Overflow, Social, Policy markdown.
 
-## Limitations / not done
+## Status
 
-- No LLM layer for the 45 review-flagged clusters (intended next step: send
-  ambiguous cases to Gemini or Claude with `prompts/resolver.business_and_management.md`).
-- Resolver only configured for `Client + Vendor`. An `Employee` resolver across
-  HR + email + GitHub records would be the obvious next pass.
-- No API endpoint exposing the review queue.
-- The Vite/React frontend (`src/`) renders **sample** records, not the real
-  resolved data — wiring is left as a follow-up.
+Working: graph construction with provenance, cross-source resolver + LLM resolver, hybrid retrieval, VFS pages with Markdown links, edit + extend endpoints with audit trail, policy browsing, conflict review queue.
+
+Not yet wired: `/projects/` trajectory pages, automated change-propagation when source files mutate (the `_ADDED` PDFs are the intended demo), schema-detection layer for generalising to new datasets.
+
+## License
+
+Internal hackathon code; ask before redistributing the EnterpriseBench-derived artefacts.

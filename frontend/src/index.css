@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* qontext design system — developer-tool palette
+   Reference: linear.app, vercel.com/dashboard, sentry.io, planetscale console
+   Color is information, not decoration. */
+
+@layer base {
+  :root {
+    /* ---------- Background layers ---------- */
+    --background: 240 6% 4%;            /* #0A0A0B app bg */
+    --surface-1: 240 5% 7%;             /* #111113 queue, cards */
+    --surface-2: 240 6% 10%;            /* #18181B hover, selected */
+
+    --card: 240 5% 7%;
+    --card-foreground: 240 5% 89%;
+    --popover: 240 6% 10%;
+    --popover-foreground: 240 5% 89%;
+
+    /* ---------- Borders ---------- */
+    --border-default: 240 7% 13%;       /* #1F1F23 */
+    --border-emphasis: 240 6% 18%;      /* #2A2A2F */
+    --border: 240 7% 13%;
+    --input: 240 6% 18%;
+    --ring: 240 5% 89%;
+
+    /* ---------- Text ---------- */
+    --foreground: 240 5% 89%;           /* #E4E4E7 zinc-200 primary */
+    --muted-foreground: 240 5% 65%;     /* #A1A1AA zinc-400 secondary */
+    --tertiary-foreground: 240 4% 36%;  /* #52525B zinc-600 tertiary */
+    --mono-foreground: 240 5% 84%;      /* #D4D4D8 mono values */
+
+    /* ---------- Surfaces (semantic shadcn) ---------- */
+    --muted: 240 6% 10%;
+    --accent: 240 6% 10%;
+    --accent-foreground: 240 5% 89%;
+    --secondary: 240 6% 10%;
+    --secondary-foreground: 240 5% 89%;
+
+    /* ---------- Primary action: monochrome high-contrast ---------- */
+    --primary: 240 5% 89%;              /* #E4E4E7 off-white */
+    --primary-foreground: 240 6% 4%;    /* #0A0A0B near-black */
+
+    /* ---------- Semantic states (desaturated, never neon) ---------- */
+    /* success / approve — muted emerald */
+    --success-bg: 158 64% 17%;          /* #064E3B */
+    --success-fg: 156 73% 67%;          /* #6EE7B7 */
+    --success-border: 158 64% 20%;      /* #065F46 */
+
+    /* danger / reject — muted red */
+    --danger-bg: 0 75% 16%;             /* #450A0A */
+    --danger-fg: 0 94% 82%;             /* #FCA5A5 */
+    --danger-border: 0 73% 30%;         /* #7F1D1D */
+
+    /* warning / escalate — darker amber */
+    --warning-bg: 26 89% 14%;           /* #422006 */
+    --warning-fg: 45 96% 65%;           /* #FCD34D */
+    --warning-border: 28 88% 26%;       /* #78350F */
+
+    /* info / neutral state — for AI labels, audit markers */
+    --info-bg: 215 28% 17%;             /* #1E293B */
+    --info-fg: 213 94% 78%;             /* #93C5FD */
+    --info-border: 224 76% 31%;         /* #1E40AF */
+
+    --destructive: 0 73% 30%;
+    --destructive-foreground: 0 94% 82%;
+
+    --radius: 0.375rem;
+
+    /* sidebar (queue) */
+    --sidebar-background: 240 5% 7%;
+    --sidebar-foreground: 240 5% 89%;
+    --sidebar-primary: 240 5% 89%;
+    --sidebar-primary-foreground: 240 6% 4%;
+    --sidebar-accent: 240 6% 10%;
+    --sidebar-accent-foreground: 240 5% 89%;
+    --sidebar-border: 240 7% 13%;
+    --sidebar-ring: 240 5% 89%;
+  }
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border-default));
+  }
+
+  html, body, #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+
+  .font-mono {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+}
