@@ -591,19 +591,19 @@ function VerdictEdges({
 
   const color = VERDICT_HEX[verdict];
 
+  // `tick` is referenced in the key to force React to recreate the Line
+  // each frame — drei's <Line> caches geometry, and we need it to re-read
+  // liveCurrentPosRef while the beacon is still travelling.
   return (
     <>
       {related.map((p, i) => (
         <Line
-          key={i}
+          key={`${i}-${tick}`}
           points={[liveCurrentPosRef.current.clone(), p.clone()]}
           color={color}
           lineWidth={1.4}
           transparent
           opacity={opacity}
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-ignore
-          data-tick={tick}
         />
       ))}
     </>
