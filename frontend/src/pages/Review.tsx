@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowRight, ChevronDown, ChevronRight, History } from "lucide-react";
+import { ArrowRight, ChevronDown, ChevronRight, History, Loader2 } from "lucide-react";
 import {
-  CONFLICTS,
   QUEUE_STATS,
   type ConflictField,
   type ConflictItem,
   type Verdict,
 } from "@/lib/review-data";
+import { useConflicts } from "@/lib/useConflicts";
 import { AvatarChip, Breadcrumb, DSButton, Kbd, SeverityBadge } from "@/components/ds";
 
 const VERDICT_COLOR: Record<Verdict, string> = {
@@ -190,17 +190,32 @@ function deviatingSide(verdict: Verdict): "A" | "B" | null {
 export default function Review() {
   const navigate = useNavigate();
 
-  const [selectedId, setSelectedId] = useState<string>(CONFLICTS[0].id);
+  // Backend-driven queue. Falls back to an empty list while loading.
+  const { data: backendConflicts, isLoading, isError, error, refetch } = useConflicts();
+  const conflicts: ConflictItem[] = backendConflicts ?? [];
+
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reviewedCount, setReviewedCount] = useState<number>(QUEUE_STATS.reviewed);
   const [confirmedIds, setConfirmedIds] = useState<Set<string>>(new Set());
   const [showMatching, setShowMatching] = useState<boolean>(false);
 
-  const selectedIndex = CONFLICTS.findIndex((c) => c.id === selectedId);
-  const item = CONFLICTS[selectedIndex] ?? CONFLICTS[0];
+  // Auto-select the first item once the queue arrives.
+  useEffect(() => {
+    if (!selectedId && conflicts.length > 0) {
+      setSelectedId(conflicts[0].id);
+    }
+  }, [conflicts, selectedId]);
+
+  const selectedIndex = Math.max(
+    0,
+    conflicts.findIndex((c) => c.id === selectedId)
+  );
+  const item: ConflictItem | null = conflicts[selectedIndex] ?? null;
 
   const navigatingRef = useRef(false);
 
   const navigateToLens = (verdict: Verdict) => {
+    if (!item) return;
     navigate("/lens", {
       state: {
         conflictId: item.id,
@@ -213,15 +228,15 @@ export default function Review() {
   };
 
   const handleSkip = () => {
-    if (navigatingRef.current) return;
+    if (navigatingRef.current || conflicts.length === 0) return;
     toast("Skipped");
-    const next = (selectedIndex + 1) % CONFLICTS.length;
-    setSelectedId(CONFLICTS[next].id);
+    const next = (selectedIndex + 1) % conflicts.length;
+    setSelectedId(conflicts[next].id);
     setShowMatching(false);
   };
 
   const handleConfirm = () => {
-    if (navigatingRef.current) return;
+    if (navigatingRef.current || !item) return;
     navigatingRef.current = true;
     toast(`Verdict confirmed: ${item.verdict}`);
     setReviewedCount((c) => c + 1);
@@ -230,7 +245,7 @@ export default function Review() {
   };
 
   const handleOverride = () => {
-    if (navigatingRef.current) return;
+    if (navigatingRef.current || !item) return;
     const overridden = VERDICT_OVERRIDE[item.verdict];
     navigatingRef.current = true;
     toast(`Overridden: ${overridden} (was ${item.verdict})`);
@@ -247,7 +262,7 @@ export default function Review() {
       return tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA" || tgt.isContentEditable;
     };
     const onKey = (e: KeyboardEvent) => {
-      if (isTyping(e)) return;
+      if (isTyping(e) || conflicts.length === 0) return;
       if (e.key === "a" || e.key === "A") {
         e.preventDefault();
         handleConfirm();
@@ -256,27 +271,27 @@ export default function Review() {
         handleSkip();
       } else if (e.key === "j" || e.key === "J") {
         e.preventDefault();
-        setSelectedId(CONFLICTS[(selectedIndex + 1) % CONFLICTS.length].id);
+        setSelectedId(conflicts[(selectedIndex + 1) % conflicts.length].id);
         setShowMatching(false);
       } else if (e.key === "k" || e.key === "K") {
         e.preventDefault();
         setSelectedId(
-          CONFLICTS[(selectedIndex - 1 + CONFLICTS.length) % CONFLICTS.length].id
+          conflicts[(selectedIndex - 1 + conflicts.length) % conflicts.length].id
         );
         setShowMatching(false);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedIndex, item]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedIndex, item, conflicts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const headerTypeTag = useMemo(
-    () => (item.conflicts[0] ? typeTagFor(item.conflicts[0]) : "FIELD MISMATCH"),
+    () => (item?.conflicts[0] ? typeTagFor(item.conflicts[0]) : "FIELD MISMATCH"),
     [item]
   );
-  const context = useMemo(() => extractContext(item.title), [item]);
-  const matched = useMemo(() => matchingFieldNames(item), [item]);
-  const deviating = deviatingSide(item.verdict);
+  const context = useMemo(() => (item ? extractContext(item.title) : ""), [item]);
+  const matched = useMemo(() => (item ? matchingFieldNames(item) : []), [item]);
+  const deviating = item ? deviatingSide(item.verdict) : null;
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg text-ink">
@@ -292,10 +307,10 @@ export default function Review() {
           </div>
           <div className="text-center">
             <div className="text-meta text-ink">
-              {reviewedCount} / {QUEUE_STATS.total} reviewed
+              {reviewedCount} / {conflicts.length} reviewed
             </div>
             <div className="text-micro text-ink-faint mt-0.5">
-              blocking {QUEUE_STATS.blockingWorkflows} active workflows
+              {isLoading ? "loading queue from backend…" : `${conflicts.length} pending review`}
             </div>
           </div>
           <div className="flex items-center gap-3 flex-1 justify-end">
@@ -326,16 +341,41 @@ export default function Review() {
           <div className="px-5 py-4 border-b border-hairline shrink-0">
             <div className="flex items-baseline justify-between">
               <span className="text-micro text-ink-faint">Queue</span>
-              <span className="text-meta text-ink-muted">{QUEUE_STATS.open} open</span>
+              <span className="text-meta text-ink-muted">{conflicts.length} open</span>
             </div>
             <div className="text-micro text-ink-faint mt-1.5 normal-case tracking-normal">
-              Avg resolution time: {QUEUE_STATS.avgResolutionSeconds}s · saving{" "}
-              {QUEUE_STATS.agentHoursSavedToday} agent-hours today
+              {isLoading
+                ? "loading from backend…"
+                : isError
+                ? "backend offline — check api/server.py"
+                : `Avg resolution ${QUEUE_STATS.avgResolutionSeconds}s · saving ${QUEUE_STATS.agentHoursSavedToday} agent-hours today`}
             </div>
           </div>
 
           <div className="flex-1 overflow-y-auto">
-            {CONFLICTS.map((c) => {
+            {isError && (
+              <div className="px-5 py-6 text-meta text-coral">
+                Failed to load conflicts: {String((error as Error)?.message ?? "unknown error")}
+                <button
+                  onClick={() => refetch()}
+                  className="block mt-2 text-ink-muted underline hover:text-ink"
+                >
+                  retry
+                </button>
+              </div>
+            )}
+            {isLoading && conflicts.length === 0 && (
+              <div className="px-5 py-6 inline-flex items-center gap-2 text-meta text-ink-faint">
+                <Loader2 className="w-3 h-3 animate-spin" /> loading queue…
+              </div>
+            )}
+            {!isLoading && !isError && conflicts.length === 0 && (
+              <div className="px-5 py-6 text-meta text-ink-faint">
+                No conflicts in the queue. Run the ingestion pipeline against
+                a dataset to populate it.
+              </div>
+            )}
+            {conflicts.map((c) => {
               const isActive = c.id === item.id;
               const isConfirmed = confirmedIds.has(c.id);
               return (
@@ -386,6 +426,16 @@ export default function Review() {
         {/* DETAIL PANE — rebuilt: diff is the hero                */}
         {/* ===================================================== */}
         <main className="flex-1 min-w-0 overflow-y-auto px-12 py-8 space-y-12">
+          {!item && (
+            <div className="h-full flex items-center justify-center text-ink-faint text-meta">
+              {isLoading
+                ? "loading conflict from backend…"
+                : isError
+                ? "Could not reach the backend. Start it with `python api/server.py --graph <file>` and refresh."
+                : "Select a conflict from the queue."}
+            </div>
+          )}
+          {item && (<>
           {/* [1] Compact header */}
           <section className="flex items-start justify-between gap-6">
             <div className="space-y-2">
@@ -584,6 +634,7 @@ export default function Review() {
           </section>
 
           <div className="h-2" />
+          </>)}
         </main>
       </div>
 
@@ -597,16 +648,18 @@ export default function Review() {
           <span className="inline-flex items-center gap-2"><Kbd>J/K</Kbd> navigate</span>
         </div>
         <div className="flex items-center gap-5">
-          <button
-            onClick={handleOverride}
-            className="cta-ghost"
-            title={`Disagree with the AI and confirm ${VERDICT_OVERRIDE[item.verdict]} instead`}
-          >
-            Override → {VERDICT_OVERRIDE[item.verdict]}
-          </button>
-          <DSButton variant="secondary" onClick={handleSkip}>Skip</DSButton>
-          <DSButton variant="primary" onClick={handleConfirm}>
-            Confirm {item.verdict} <ArrowRight className="w-3.5 h-3.5" />
+          {item && (
+            <button
+              onClick={handleOverride}
+              className="cta-ghost"
+              title={`Disagree with the AI and confirm ${VERDICT_OVERRIDE[item.verdict]} instead`}
+            >
+              Override → {VERDICT_OVERRIDE[item.verdict]}
+            </button>
+          )}
+          <DSButton variant="secondary" onClick={handleSkip} disabled={!item}>Skip</DSButton>
+          <DSButton variant="primary" onClick={handleConfirm} disabled={!item}>
+            Confirm {item?.verdict ?? "—"} <ArrowRight className="w-3.5 h-3.5" />
           </DSButton>
         </div>
       </footer>
