@@ -33,6 +33,8 @@ node_modules/
 **/.npm-cache/
 frontend/dist/
 frontend/.bun/
+frontend/.lovable/
+frontend/dev-server.log
 *.tsbuildinfo
 
 # OS / editor

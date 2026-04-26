@@ -23,7 +23,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -608,15 +608,11 @@ if os.path.isdir(os.path.join(FRONTEND_DIST_DIR, "assets")):
 
 @app.get("/", include_in_schema=False)
 def frontend_index():
-    """Serve the built demo UI when available."""
+    """Serve the built demo UI if available, otherwise send the user to the
+    Swagger docs which give a usable browse-and-test surface for the API."""
     if os.path.exists(FRONTEND_INDEX_PATH):
         return FileResponse(FRONTEND_INDEX_PATH)
-    return JSONResponse(
-        status_code=404,
-        content={
-            "detail": "Frontend build not found. Build the demo UI under frontend/dist first."
-        },
-    )
+    return RedirectResponse(url="/docs", status_code=307)
 
 
 @app.get("/{full_path:path}", include_in_schema=False)

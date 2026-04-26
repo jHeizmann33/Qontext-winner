@@ -2,101 +2,222 @@
 @tailwind components;
 @tailwind utilities;
 
-/* qontext design system — developer-tool palette
-   Reference: linear.app, vercel.com/dashboard, sentry.io, planetscale console
-   Color is information, not decoration. */
+/* JetBrains Mono — loaded via index.html <link> */
 
 @layer base {
   :root {
-    /* ---------- Background layers ---------- */
-    --background: 240 6% 4%;            /* #0A0A0B app bg */
-    --surface-1: 240 5% 7%;             /* #111113 queue, cards */
-    --surface-2: 240 6% 10%;            /* #18181B hover, selected */
+    /* Map shadcn tokens to Qontext palette */
+    --background: 0 0% 4%;
+    --foreground: 0 0% 98%;
 
-    --card: 240 5% 7%;
-    --card-foreground: 240 5% 89%;
-    --popover: 240 6% 10%;
-    --popover-foreground: 240 5% 89%;
+    --card: 0 0% 8%;
+    --card-foreground: 0 0% 98%;
 
-    /* ---------- Borders ---------- */
-    --border-default: 240 7% 13%;       /* #1F1F23 */
-    --border-emphasis: 240 6% 18%;      /* #2A2A2F */
-    --border: 240 7% 13%;
-    --input: 240 6% 18%;
-    --ring: 240 5% 89%;
+    --popover: 0 0% 8%;
+    --popover-foreground: 0 0% 98%;
 
-    /* ---------- Text ---------- */
-    --foreground: 240 5% 89%;           /* #E4E4E7 zinc-200 primary */
-    --muted-foreground: 240 5% 65%;     /* #A1A1AA zinc-400 secondary */
-    --tertiary-foreground: 240 4% 36%;  /* #52525B zinc-600 tertiary */
-    --mono-foreground: 240 5% 84%;      /* #D4D4D8 mono values */
+    --primary: 14 100% 71%;          /* coral */
+    --primary-foreground: 0 0% 4%;
 
-    /* ---------- Surfaces (semantic shadcn) ---------- */
-    --muted: 240 6% 10%;
-    --accent: 240 6% 10%;
-    --accent-foreground: 240 5% 89%;
-    --secondary: 240 6% 10%;
-    --secondary-foreground: 240 5% 89%;
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 0 0% 98%;
 
-    /* ---------- Primary action: monochrome high-contrast ---------- */
-    --primary: 240 5% 89%;              /* #E4E4E7 off-white */
-    --primary-foreground: 240 6% 4%;    /* #0A0A0B near-black */
+    --muted: 0 0% 10%;
+    --muted-foreground: 0 0% 63%;
 
-    /* ---------- Semantic states (desaturated, never neon) ---------- */
-    /* success / approve — muted emerald */
-    --success-bg: 158 64% 17%;          /* #064E3B */
-    --success-fg: 156 73% 67%;          /* #6EE7B7 */
-    --success-border: 158 64% 20%;      /* #065F46 */
+    --accent: 0 0% 10%;
+    --accent-foreground: 0 0% 98%;
 
-    /* danger / reject — muted red */
-    --danger-bg: 0 75% 16%;             /* #450A0A */
-    --danger-fg: 0 94% 82%;             /* #FCA5A5 */
-    --danger-border: 0 73% 30%;         /* #7F1D1D */
+    --destructive: 14 100% 71%;
+    --destructive-foreground: 0 0% 98%;
 
-    /* warning / escalate — darker amber */
-    --warning-bg: 26 89% 14%;           /* #422006 */
-    --warning-fg: 45 96% 65%;           /* #FCD34D */
-    --warning-border: 28 88% 26%;       /* #78350F */
+    --border: 0 0% 15%;
+    --input: 0 0% 15%;
+    --ring: 14 100% 71%;             /* coral */
 
-    /* info / neutral state — for AI labels, audit markers */
-    --info-bg: 215 28% 17%;             /* #1E293B */
-    --info-fg: 213 94% 78%;             /* #93C5FD */
-    --info-border: 224 76% 31%;         /* #1E40AF */
-
-    --destructive: 0 73% 30%;
-    --destructive-foreground: 0 94% 82%;
-
-    --radius: 0.375rem;
-
-    /* sidebar (queue) */
-    --sidebar-background: 240 5% 7%;
-    --sidebar-foreground: 240 5% 89%;
-    --sidebar-primary: 240 5% 89%;
-    --sidebar-primary-foreground: 240 6% 4%;
-    --sidebar-accent: 240 6% 10%;
-    --sidebar-accent-foreground: 240 5% 89%;
-    --sidebar-border: 240 7% 13%;
-    --sidebar-ring: 240 5% 89%;
+    --radius: 6px;
   }
-}
 
-@layer base {
   * {
-    border-color: hsl(var(--border-default));
+    @apply border-border;
   }
 
   html, body, #root {
     height: 100%;
+    margin: 0;
+    padding: 0;
   }
 
   body {
-    @apply bg-background text-foreground;
-    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    @apply bg-bg text-ink;
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-feature-settings: "ss01", "ss02";
     -webkit-font-smoothing: antialiased;
-    font-feature-settings: 'cv11', 'ss01';
+    -moz-osx-font-smoothing: grayscale;
   }
 
-  .font-mono {
-    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  body, button, input, textarea, select,
+  h1, h2, h3, h4, h5, h6,
+  p, span, div, a, label, code, pre, kbd {
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Typography scale                                                    */
+/* ------------------------------------------------------------------ */
+
+.text-verdict { font-size: 56px; line-height: 1; font-weight: 500; letter-spacing: -0.02em; }
+.text-h1      { font-size: 24px; line-height: 1.2; font-weight: 500; letter-spacing: -0.01em; }
+.text-body    { font-size: 14px; line-height: 1.55; font-weight: 400; }
+.text-meta    { font-size: 12.5px; line-height: 1.4; font-weight: 400; }
+.text-micro   { font-size: 11px; line-height: 1.3; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; }
+
+/* ------------------------------------------------------------------ */
+/* Surfaces & primitives                                               */
+/* ------------------------------------------------------------------ */
+
+.surface-card   { @apply bg-surface border border-hairline rounded-md; }
+.surface-nested { @apply bg-surface-2 border border-hairline rounded-md; }
+.hairline       { @apply border-0 border-t border-hairline; }
+
+.cta-primary {
+  background-color: hsl(14 100% 71% / 0.10);
+  border: 1px solid hsl(14 100% 71%);
+  color: hsl(14 100% 71%);
+  border-radius: 6px;
+  padding: 10px 16px;
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  box-shadow: 0 0 24px -6px rgba(255, 138, 107, 0.45);
+  transition: background-color 0.15s ease;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.cta-primary:hover { background-color: hsl(14 100% 71% / 0.18); }
+.cta-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.cta-secondary {
+  background: transparent;
+  border: 1px solid hsl(0 0% 15%);
+  color: hsl(0 0% 98%);
+  border-radius: 6px;
+  padding: 10px 16px;
+  font-size: 12.5px;
+  font-weight: 400;
+  transition: border-color 0.15s ease;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.cta-secondary:hover { border-color: hsl(0 0% 63%); }
+
+.cta-ghost {
+  background: transparent;
+  border: none;
+  color: hsl(0 0% 63%);
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s;
+}
+.cta-ghost:hover { color: hsl(0 0% 98%); background-color: hsl(0 0% 8%); }
+
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: hsl(0 0% 10%);
+  border: 1px solid hsl(0 0% 15%);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: hsl(0 0% 63%);
+  font-family: "JetBrains Mono", monospace;
+  min-width: 18px;
+  height: 18px;
+}
+
+.severity-high {
+  background-color: hsl(14 100% 71% / 0.14);
+  color: hsl(14 100% 71%);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  display: inline-block;
+}
+
+.severity-med {
+  background-color: hsl(38 68% 73% / 0.14);
+  color: hsl(38 68% 73%);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  display: inline-block;
+}
+
+.severity-low {
+  background-color: hsl(145 38% 72% / 0.14);
+  color: hsl(145 38% 72%);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  display: inline-block;
+}
+
+.input-line {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid hsl(0 0% 15%);
+  color: hsl(0 0% 98%);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 14px;
+  padding: 4px 2px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.input-line:focus { border-bottom-color: hsl(14 100% 71%); }
+
+.highlight-pill {
+  background-color: hsl(14 100% 71% / 0.18);
+  color: hsl(14 100% 71%);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.badge-mono {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: hsl(0 0% 63%);
+  border: 1px solid hsl(0 0% 15%);
+  background-color: hsl(0 0% 8%);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.breadcrumb-mono { font-size: 12.5px; font-weight: 400; color: hsl(0 0% 63%); }
+.breadcrumb-mono .sep { color: hsl(0 0% 32%); margin: 0 6px; }
+.breadcrumb-mono .last { color: hsl(0 0% 98%); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: hsl(0 0% 4%); }
+::-webkit-scrollbar-thumb { background: hsl(0 0% 15%); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(0 0% 32%); }
