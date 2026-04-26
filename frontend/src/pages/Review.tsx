@@ -188,6 +188,92 @@ function deviatingSide(verdict: Verdict): "A" | "B" | null {
   return null;
 }
 
+/**
+ * Compute a delta string for the variant card's audit-right slot.
+ * Returns a numeric delta when both values are parseable as the same
+ * currency, otherwise returns null and the caller falls back to a
+ * generic source label.
+ */
+function quickDelta(a: string, b: string): string | null {
+  const numA = parseAmount(a);
+  const numB = parseAmount(b);
+  if (numA && numB && numA.currency === numB.currency) {
+    const delta = numB.num - numA.num;
+    const pct = (delta / numA.num) * 100;
+    const sign = delta >= 0 ? "+" : "−";
+    const formatted = Math.abs(delta).toLocaleString("en-US", {
+      maximumFractionDigits: 0,
+    });
+    return `Δ ${sign}${numA.currency} ${formatted} · ${sign}${Math.abs(pct).toFixed(1)}%`;
+  }
+  return null;
+}
+
+/**
+ * Map the selected ConflictItem to the SourceCardData pair the
+ * ConflictSourceCards component renders. Pulls real values from the
+ * conflict's first conflicting field + its two evidence records, so
+ * each conflict in the queue shows its own source pair instead of a
+ * single hardcoded example.
+ */
+function deriveSourceCards(item: ConflictItem) {
+  const field = item.conflicts[0];
+  const evA = item.evidence[0];
+  const evB = item.evidence[1];
+
+  const additional = item.conflicts.length - 1;
+  const sectionLabel = additional > 0
+    ? `Conflict · ${field.label.toLowerCase()} (+${additional} more field${additional > 1 ? "s" : ""} differ)`
+    : `Conflict · ${field.label.toLowerCase()}`;
+
+  const variantAuditRight =
+    quickDelta(field.sourceA.value, field.sourceB.value) ??
+    `from ${evB.uploader}`;
+
+  const metaA = [
+    evA.date,
+    `${evA.pages}pp`,
+    `from ${evA.uploader}`,
+    evA.party,
+  ].filter((s): s is string => Boolean(s) && s !== "—");
+  const metaB = [
+    evB.date,
+    `${evB.pages}pp`,
+    `from ${evB.uploader}`,
+    evB.party,
+  ].filter((s): s is string => Boolean(s) && s !== "—");
+
+  return {
+    sectionLabel,
+    anchor: {
+      doc_name: evA.filename,
+      doc_url: "#",
+      metadata: metaA,
+      field: field.label,
+      value: field.sourceA.value,
+      snippet_loc: `record · ${evA.uploader}`,
+      snippet_link: "#",
+      snippet_text: evA.quote,
+      highlight: evA.highlight || field.sourceA.value,
+      audit_left: evA.date && evA.date !== "—" ? `ingested ${evA.date}` : "ingested —",
+      audit_right: evA.uploader || "system",
+    },
+    variant: {
+      doc_name: evB.filename,
+      doc_url: "#",
+      metadata: metaB,
+      field: field.label,
+      value: field.sourceB.value,
+      snippet_loc: `record · ${evB.uploader}`,
+      snippet_link: "#",
+      snippet_text: evB.quote,
+      highlight: evB.highlight || field.sourceB.value,
+      audit_left: evB.date && evB.date !== "—" ? `ingested ${evB.date}` : "ingested —",
+      audit_right: variantAuditRight,
+    },
+  };
+}
+
 export default function Review() {
   const navigate = useNavigate();
 
@@ -489,41 +575,22 @@ export default function Review() {
             <div className="mt-3 text-meta text-ink-muted">{item.unblockSummary}</div>
           </section>
 
-          {/* SOURCE CARDS — mockups_v2 scenario 2.
-              Mock data is hardcoded per the spec; the next iteration will
-              derive these from the selected ConflictItem so each conflict
-              shows its own source pair. */}
-          <ConflictSourceCards
-            sectionLabel="Conflict · clause 4.2 — total contract value"
-            anchor={{
-              doc_name: "MSA_signed.pdf",
-              doc_url: "/docs/MSA_Acme_2025_signed.pdf#L47",
-              metadata: ["14 Mar 2025", "12pp", "signed by JM", "clause 4.2 · p.4"],
-              field: "Amount",
-              value: "EUR 1,240,000",
-              snippet_loc: "p.4 · ln 47",
-              snippet_link: "/docs/MSA_Acme_2025_signed.pdf#L47",
-              snippet_text:
-                "…the Total Contract Value shall be {VALUE} payable over the initial term of 36 months in equal monthly instalments…",
-              highlight: "EUR 1,240,000.00",
-              audit_left: "ingested 14 Mar 09:42",
-              audit_right: "sys.primary",
-            }}
-            variant={{
-              doc_name: "amendment_v3.docx",
-              doc_url: "/docs/MSA_Acme_2025_amendment_v3.docx#L23",
-              metadata: ["02 Apr 2025", "4pp", "uploaded by MK", "clause 4.2 · p.4"],
-              field: "Amount",
-              value: "EUR 1,420,000",
-              snippet_loc: "p.4 · ln 23",
-              snippet_link: "/docs/MSA_Acme_2025_amendment_v3.docx#L23",
-              snippet_text:
-                "…the Revised Total Contract Value shall be {VALUE} payable in four equal quarterly instalments effective Q2 2025…",
-              highlight: "EUR 1,420,000.00",
-              audit_left: "uploaded 02 Apr 11:18",
-              audit_right: "Δ +EUR 180,000 · +14.5%",
-            }}
-          />
+          {/* SOURCE CARDS — derived live from the selected ConflictItem.
+              Anchor = item.evidence[0] + conflicts[0].sourceA.
+              Variant = item.evidence[1] + conflicts[0].sourceB.
+              The variant card's audit-right shows a numeric Δ when both
+              values are parseable as the same currency, otherwise the
+              source system. */}
+          {(() => {
+            const cards = deriveSourceCards(item);
+            return (
+              <ConflictSourceCards
+                sectionLabel={cards.sectionLabel}
+                anchor={cards.anchor}
+                variant={cards.variant}
+              />
+            );
+          })()}
 
           {/* === REMOVED below — replaced by ConflictSourceCards === */}
           <section style={{ display: "none" }}>
