@@ -7,6 +7,9 @@ full_graph*.json
 full_with_policies*.json
 policy_graph*.json
 test_full*.json
+incidents_graph.json
+*_graph.json
+inspect_*.py
 
 # Runtime caches
 ingestion/.llm_resolver_cache.json
