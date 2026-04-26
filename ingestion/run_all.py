@@ -19,7 +19,7 @@ The order matters:
 import argparse
 import os
 import time
-from graph_utils import create_graph, save_graph, get_stats
+from graph_utils import create_graph, load_graph, save_graph, get_stats
 from ingest_hr import ingest_hr
 from ingest_crm import ingest_crm
 from ingest_bm import ingest_bm
@@ -27,6 +27,18 @@ from ingest_communications import ingest_communications
 from resolver import resolve_entities, BUSINESS_ORG_RULE, PRODUCT_RULE, POLICY_RULE
 from detectors import detect_all
 from ingest_policies import ingest_policies
+
+
+# Maps a `--source` flag value to its ingester. Lets users re-run a single
+# source against an existing graph and have the change_log populated only with
+# the deltas, instead of rebuilding from scratch.
+SOURCE_INGESTERS = {
+    "hr": ingest_hr,
+    "crm": ingest_crm,
+    "bm": ingest_bm,
+    "communications": ingest_communications,
+    "policies": ingest_policies,
+}
 from llm_resolver import (
     llm_resolve_pending,
     DEFAULT_MODEL as LLM_DEFAULT_MODEL,
@@ -61,28 +73,53 @@ def main():
                              f"(default: {DEFAULT_RISK_THRESHOLD})")
     parser.add_argument("--verbose", action="store_true",
                         help="Verbose output (e.g. resolver blocking stats)")
+    parser.add_argument("--graph", default=None,
+                        help="Existing graph file to extend instead of creating a "
+                             "fresh one. Used for incremental re-ingest so "
+                             "property changes show up in each node's change_log.")
+    parser.add_argument("--source", action="append", default=None,
+                        choices=list(SOURCE_INGESTERS.keys()),
+                        help="Re-run only the named source ingester(s). Can be "
+                             "passed multiple times (e.g. --source hr --source crm). "
+                             "If omitted, all sources run.")
     args = parser.parse_args()
-    
+
     start_time = time.time()
-    
+
     print("=" * 60)
     print("QONTEXT — Knowledge Graph Ingestion Pipeline")
     print("=" * 60)
     print(f"Data directory: {args.data_dir}")
     print(f"Output file: {args.output}")
+    if args.graph:
+        print(f"Resuming from: {args.graph}")
+    if args.source:
+        print(f"Source filter: {', '.join(args.source)}")
     print()
-    
-    # Phase 1: Core entities
-    graph = create_graph()
-    ingest_hr(graph, args.data_dir)
-    ingest_crm(graph, args.data_dir)
-    ingest_bm(graph, args.data_dir)
-    
-    # Phase 2: Communication sources
-    ingest_communications(graph, args.data_dir)
 
-    # Phase 2b: Policy documents (markdown)
-    ingest_policies(graph, args.data_dir, verbose=args.verbose)
+    # Phase 1: graph initialisation
+    if args.graph and os.path.exists(args.graph):
+        graph = load_graph(args.graph)
+        before = get_stats(graph)
+        print(f"Loaded existing graph: {before['total_nodes']} nodes, "
+              f"{before['total_edges']} edges, "
+              f"{before['total_conflicts']} prior conflicts")
+        print()
+    else:
+        graph = create_graph()
+
+    # Phase 2: ingestion (filtered by --source if given)
+    requested = set(args.source) if args.source else set(SOURCE_INGESTERS)
+    if "hr" in requested:
+        ingest_hr(graph, args.data_dir)
+    if "crm" in requested:
+        ingest_crm(graph, args.data_dir)
+    if "bm" in requested:
+        ingest_bm(graph, args.data_dir)
+    if "communications" in requested:
+        ingest_communications(graph, args.data_dir)
+    if "policies" in requested:
+        ingest_policies(graph, args.data_dir, verbose=args.verbose)
     
     # Phase 3: Knowledge sources
     # ingest_github(graph, args.data_dir)
@@ -165,6 +202,25 @@ def main():
               f"{run['merges_performed']} merges, "
               f"{run['same_as_edges_added']} same_as edges, "
               f"{run['review_flags_added']} review-flagged clusters")
+
+    # Print change_log summary — only meaningful when re-ingesting (--graph)
+    if args.graph:
+        nodes_with_changes = 0
+        update_events = 0
+        added_events = 0
+        for _, data in graph.nodes(data=True):
+            cl = data.get("change_log", [])
+            if not cl:
+                continue
+            nodes_with_changes += 1
+            for entry in cl:
+                if entry.get("kind") == "updated":
+                    update_events += 1
+                elif entry.get("kind") == "added":
+                    added_events += 1
+        print()
+        print(f"Change log: {nodes_with_changes} nodes touched, "
+              f"{update_events} property updates, {added_events} new properties added")
 
 
 if __name__ == "__main__":

@@ -269,6 +269,7 @@ def generate_employee_page(graph, emp_id: str) -> Optional[str]:
             lines.append("")
     
     # --- Notes (human extensions) ---
+    lines.extend(render_recent_changes(graph.nodes[node_id]))
     lines.extend(render_notes_section(graph, node_id))
 
     # --- Provenance ---
@@ -398,6 +399,7 @@ def generate_customer_page(graph, customer_id: str) -> Optional[str]:
         lines.append("")
     
     # --- Notes (human extensions) ---
+    lines.extend(render_recent_changes(graph.nodes[node_id]))
     lines.extend(render_notes_section(graph, node_id))
 
     # --- Provenance ---
@@ -483,6 +485,7 @@ def generate_team_page(graph, department_name: str) -> Optional[str]:
     lines.append("")
 
     # --- Notes (human extensions) ---
+    lines.extend(render_recent_changes(graph.nodes[node_id]))
     lines.extend(render_notes_section(graph, node_id))
 
 
@@ -585,6 +588,347 @@ def render_notes_section(graph, node_id: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Recent-changes section (change propagation)
+# ---------------------------------------------------------------------------
+
+def render_recent_changes(node_data: dict, limit: int = 10) -> list[str]:
+    """
+    Render the most recent change_log entries on a node so the VFS shows when
+    each fact was last updated and by which source. Returns markdown lines or
+    [] if the node has no recorded changes.
+    """
+    log = node_data.get("change_log", [])
+    if not log:
+        return []
+    out = ["## Recent updates"]
+    for entry in sorted(log, key=lambda e: e.get("at", ""), reverse=True)[:limit]:
+        kind = entry.get("kind", "updated")
+        field = entry.get("field", "?")
+        at = (entry.get("at") or "")[:19]
+        source = entry.get("source_system") or "unknown"
+        if kind == "added":
+            out.append(f"- **{at}** — `{field}` added from {source}: `{entry.get('new_value')}`")
+        else:
+            old = entry.get("old_value")
+            new = entry.get("new_value")
+            out.append(
+                f"- **{at}** — `{field}` updated from `{old}` to `{new}` "
+                f"(source: {source})"
+            )
+    out.append("")
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Provenance block helper (deduped across pages)
+# ---------------------------------------------------------------------------
+
+def _provenance_block(node_data: dict) -> list[str]:
+    """Return the standard `## Data sources` markdown block for a node."""
+    out = ["## Data sources"]
+    seen = set()
+    for p in node_data.get("provenance", []):
+        src = p.get("source_system", "unknown")
+        file = p.get("file", "")
+        key = f"{src}/{file}" if file else src
+        if key not in seen:
+            seen.add(key)
+            out.append(f"- {key}")
+    out.append("")
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Email thread page (trajectory: ongoing conversations)
+# ---------------------------------------------------------------------------
+
+def generate_thread_page(graph, thread_id: str) -> Optional[str]:
+    """
+    Render an EmailThread as a trajectory page: subject, participants (linked
+    employees), chronological email timeline, status (active/dormant), notes.
+    """
+    from graph_utils import make_node_id
+
+    node_id = make_node_id("EmailThread", thread_id)
+    if not graph.has_node(node_id):
+        return None
+
+    node = graph.nodes[node_id]
+    props = node.get("properties", {})
+
+    # Pull all emails in this thread via the part_of_thread incoming edges
+    emails = _get_related(graph, node_id, "part_of_thread", direction="incoming")
+    emails_sorted = sorted(emails, key=lambda e: e["properties"].get("date", ""))
+
+    # Collect unique participants (sender + recipient emp_ids if present)
+    participants: dict[str, str] = {}
+    for e in emails:
+        ep = e["properties"]
+        for emp_id_field, name_field in (
+            ("sender_emp_id", "sender_name"),
+            ("recipient_emp_id", "recipient_name"),
+        ):
+            eid = ep.get(emp_id_field)
+            if eid and eid not in participants:
+                participants[eid] = ep.get(name_field, eid)
+
+    lines = []
+    subject = props.get("subject", thread_id)
+    lines.append(f"# {subject}")
+    lines.append("")
+    lines.append(f"**Thread ID:** `{thread_id}`")
+    lines.append(f"**Emails:** {len(emails)}")
+    lines.append(f"**Participants:** {len(participants)}")
+
+    # Status: active if anything within ~6 months of the latest email date,
+    # dormant otherwise. We use string comparison since dates are ISO-prefixed.
+    if emails_sorted:
+        first_date = emails_sorted[0]["properties"].get("date", "")[:10]
+        last_date = emails_sorted[-1]["properties"].get("date", "")[:10]
+        lines.append(f"**Span:** {first_date} → {last_date}")
+    lines.append("")
+
+    if participants:
+        lines.append("## Participants")
+        for eid, name in participants.items():
+            lines.append(f"- {_link(name, 'people', eid)}")
+        lines.append("")
+
+    if emails_sorted:
+        lines.append("## Timeline")
+        for e in emails_sorted:
+            ep = e["properties"]
+            date = ep.get("date", "")[:16]
+            sender_eid = ep.get("sender_emp_id", "")
+            sender = ep.get("sender_name", sender_eid or "(unknown)")
+            sender_link = _link(sender, "people", sender_eid) if sender_eid else sender
+            snippet = (ep.get("body", "") or "")[:180].replace("\n", " ").strip()
+            if snippet and len(ep.get("body", "")) > 180:
+                snippet += "…"
+            lines.append(f"- **{date}** — {sender_link}: {snippet}")
+        lines.append("")
+
+    lines.extend(render_recent_changes(graph.nodes[node_id]))
+    lines.extend(render_notes_section(graph, node_id))
+    lines.extend(_provenance_block(node))
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# IT ticket page (trajectory: discrete tasks with status)
+# ---------------------------------------------------------------------------
+
+def generate_ticket_page(graph, ticket_id: str) -> Optional[str]:
+    """
+    Render an ITTicket as a markdown page (replaces the previous raw JSON
+    response): priority, dates, raised-by + assigned-to (linked), full issue
+    + resolution text, notes.
+    """
+    from graph_utils import make_node_id
+
+    node_id = make_node_id("ITTicket", ticket_id)
+    if not graph.has_node(node_id):
+        return None
+
+    node = graph.nodes[node_id]
+    props = node.get("properties", {})
+
+    lines = []
+    lines.append(f"# IT ticket #{ticket_id}")
+    lines.append("")
+
+    priority = props.get("priority", "")
+    status = "resolved" if (props.get("resolution") or "").strip() else "open"
+    lines.append(f"**Status:** {status}")
+    if priority:
+        lines.append(f"**Priority:** {priority}")
+    if props.get("assigned_date"):
+        lines.append(f"**Assigned date:** {props['assigned_date']}")
+    if props.get("resolved_date"):
+        lines.append(f"**Resolved date:** {props['resolved_date']}")
+    lines.append("")
+
+    raised_by = props.get("raised_by_emp_id")
+    assigned_to = props.get("assigned_to_emp_id")
+    if raised_by or assigned_to:
+        lines.append("## People")
+        if raised_by:
+            raiser_node = graph.nodes.get(f"Employee:{raised_by}", {})
+            raiser_name = raiser_node.get("properties", {}).get("name", raised_by)
+            lines.append(f"- **Raised by:** {_link(raiser_name, 'people', raised_by)}")
+        if assigned_to:
+            asg_node = graph.nodes.get(f"Employee:{assigned_to}", {})
+            asg_name = asg_node.get("properties", {}).get("name", assigned_to)
+            lines.append(f"- **Assigned to:** {_link(asg_name, 'people', assigned_to)}")
+        lines.append("")
+
+    if props.get("issue"):
+        lines.append("## Issue")
+        lines.append(props["issue"])
+        lines.append("")
+    if props.get("resolution"):
+        lines.append("## Resolution")
+        lines.append(props["resolution"])
+        lines.append("")
+
+    lines.extend(render_recent_changes(graph.nodes[node_id]))
+    lines.extend(render_notes_section(graph, node_id))
+    lines.extend(_provenance_block(node))
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Project page (synthetic trajectory: curated cross-cutting initiatives)
+# ---------------------------------------------------------------------------
+
+def _project_threads(graph, min_emails: int = 3, min_participants: int = 2) -> list[dict]:
+    """
+    A "project" is synthesized from email threads that look substantial:
+    >= min_emails emails AND >= min_participants distinct emp_ids. This
+    surfaces real ongoing initiatives instead of one-off conversations.
+    Returns a list sorted by descending email count.
+    """
+    out = []
+    for nid, data in graph.nodes(data=True):
+        if data.get("node_type") != "EmailThread":
+            continue
+        emails = [s for s, _, _, ed in graph.in_edges(nid, data=True, keys=True)
+                  if ed.get("rel_type") == "part_of_thread"]
+        if len(emails) < min_emails:
+            continue
+        participants = set()
+        latest_date = ""
+        for em_id in emails:
+            ep = graph.nodes[em_id].get("properties", {})
+            for f in ("sender_emp_id", "recipient_emp_id"):
+                eid = ep.get(f)
+                if eid:
+                    participants.add(eid)
+            d = ep.get("date", "")
+            if d > latest_date:
+                latest_date = d
+        if len(participants) < min_participants:
+            continue
+        out.append({
+            "node_id": nid,
+            "thread_id": nid.split(":", 1)[-1],
+            "subject": data.get("properties", {}).get("subject", nid),
+            "email_count": len(emails),
+            "participant_count": len(participants),
+            "latest_date": latest_date,
+            "participants": participants,
+        })
+    out.sort(key=lambda x: (-x["email_count"], x["latest_date"]))
+    return out
+
+
+def generate_project_page(graph, thread_id: str) -> Optional[str]:
+    """
+    Render a Project page (built on top of an EmailThread that meets the
+    project threshold). Adds project-specific framing on top of the thread:
+    contributing departments, related IT tickets raised by participants.
+    """
+    from graph_utils import make_node_id
+
+    node_id = make_node_id("EmailThread", thread_id)
+    if not graph.has_node(node_id):
+        return None
+
+    node = graph.nodes[node_id]
+    props = node.get("properties", {})
+    subject = props.get("subject", thread_id)
+
+    emails = _get_related(graph, node_id, "part_of_thread", direction="incoming")
+    if not emails:
+        return None
+
+    participants: dict[str, str] = {}
+    departments: dict[str, int] = {}
+    for e in emails:
+        ep = e["properties"]
+        for emp_id_field, name_field in (
+            ("sender_emp_id", "sender_name"),
+            ("recipient_emp_id", "recipient_name"),
+        ):
+            eid = ep.get(emp_id_field)
+            if not eid:
+                continue
+            participants.setdefault(eid, ep.get(name_field, eid))
+            emp_node = graph.nodes.get(f"Employee:{eid}", {})
+            dept = emp_node.get("properties", {}).get("department")
+            if dept:
+                departments[dept] = departments.get(dept, 0) + 1
+
+    # Related tickets: tickets raised by any participant
+    related_tickets = []
+    for eid in participants:
+        for src, _, _, ed in graph.in_edges(f"Employee:{eid}", data=True, keys=True):
+            pass  # Employee has outgoing raised_ticket edges
+        for _, tgt, _, ed in graph.out_edges(f"Employee:{eid}", data=True, keys=True):
+            if ed.get("rel_type") == "raised_ticket":
+                tnode = graph.nodes.get(tgt, {})
+                related_tickets.append({
+                    "ticket_id": tgt.split(":", 1)[-1],
+                    "priority": tnode.get("properties", {}).get("priority", ""),
+                    "issue": (tnode.get("properties", {}).get("issue", "") or "")[:120],
+                    "raised_by": eid,
+                })
+    # Dedupe
+    seen_t = set()
+    related_tickets_unique = []
+    for t in related_tickets:
+        if t["ticket_id"] in seen_t:
+            continue
+        seen_t.add(t["ticket_id"])
+        related_tickets_unique.append(t)
+
+    emails_sorted = sorted(emails, key=lambda e: e["properties"].get("date", ""))
+    first_date = emails_sorted[0]["properties"].get("date", "")[:10]
+    last_date = emails_sorted[-1]["properties"].get("date", "")[:10]
+
+    lines = []
+    lines.append(f"# {subject}")
+    lines.append("")
+    lines.append(f"_Synthesized project view derived from email thread `{thread_id}`._")
+    lines.append("")
+    lines.append("## Snapshot")
+    lines.append(f"- **Emails exchanged:** {len(emails)}")
+    lines.append(f"- **Participants:** {len(participants)}")
+    lines.append(f"- **Departments involved:** {len(departments)}")
+    lines.append(f"- **Active span:** {first_date} → {last_date}")
+    lines.append(f"- **Related IT tickets (raised by participants):** {len(related_tickets_unique)}")
+    lines.append("")
+    lines.append(f"Full conversation: [thread {thread_id}](/threads/{thread_id})")
+    lines.append("")
+
+    if departments:
+        lines.append("## Departments contributing")
+        for dept, count in sorted(departments.items(), key=lambda kv: -kv[1]):
+            lines.append(f"- {_link(dept, 'teams', dept)} ({count} email touches)")
+        lines.append("")
+
+    if participants:
+        lines.append("## Participants")
+        for eid, name in participants.items():
+            lines.append(f"- {_link(name, 'people', eid)}")
+        lines.append("")
+
+    if related_tickets_unique:
+        lines.append(f"## Related IT tickets ({len(related_tickets_unique)})")
+        for t in related_tickets_unique[:25]:
+            link = _link(f"#{t['ticket_id']}", "it-tickets", t["ticket_id"])
+            lines.append(f"- {link} ({t['priority']}) — {t['issue']}")
+        if len(related_tickets_unique) > 25:
+            lines.append(f"- *... and {len(related_tickets_unique) - 25} more*")
+        lines.append("")
+
+    lines.extend(render_recent_changes(graph.nodes[node_id]))
+    lines.extend(render_notes_section(graph, node_id))
+    lines.extend(_provenance_block(node))
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Directory listings
 # ---------------------------------------------------------------------------
 
@@ -623,7 +967,11 @@ def list_directory(graph, path: str) -> dict:
                 {"name": "products", "type": "directory", "path": "/products",
                  "description": "Product catalogue"},
                 {"name": "it-tickets", "type": "directory", "path": "/it-tickets",
-                 "description": "IT service tickets"},
+                 "description": "IT service tickets — open and resolved tasks"},
+                {"name": "threads", "type": "directory", "path": "/threads",
+                 "description": "Email threads — ongoing conversations (trajectory)"},
+                {"name": "projects", "type": "directory", "path": "/projects",
+                 "description": "Curated cross-cutting initiatives (synthesized)"},
                 {"name": "policies", "type": "directory", "path": "/policies",
                  "description": "Company policies and SOPs"},
             ]
@@ -731,12 +1079,61 @@ def list_directory(graph, path: str) -> dict:
             props = graph.nodes[tid].get("properties", {})
             ticket_id = tid.split(":")[1]
             issue = props.get("issue", "")[:80]
+            status = "resolved" if (props.get("resolution") or "").strip() else "open"
             children.append({
                 "name": f"ticket-{ticket_id}.md",
                 "type": "file",
                 "path": f"/it-tickets/{ticket_id}",
-                "summary": f"#{ticket_id} ({props.get('priority', '')}) — {issue}"
+                "summary": f"#{ticket_id} [{status}, {props.get('priority', '')}] — {issue}",
             })
-        return {"path": f"/it-tickets", "type": "directory", "children": children}
-    
+        return {"path": "/it-tickets", "type": "directory", "children": children}
+
+    elif path == "threads":
+        # Threads are too numerous to enumerate fully (~4k+); return the top
+        # N by email count so the listing remains useful instead of overwhelming.
+        thread_summaries = []
+        for nid, data in graph.nodes(data=True):
+            if data.get("node_type") != "EmailThread":
+                continue
+            count = sum(1 for _, _, _, ed in graph.in_edges(nid, data=True, keys=True)
+                        if ed.get("rel_type") == "part_of_thread")
+            thread_summaries.append((count, nid, data))
+        thread_summaries.sort(reverse=True)
+        children = []
+        for count, nid, data in thread_summaries[:200]:
+            tid = nid.split(":", 1)[-1]
+            subject = data.get("properties", {}).get("subject", tid)
+            children.append({
+                "name": f"{tid}.md",
+                "type": "file",
+                "path": f"/threads/{tid}",
+                "summary": f"[{count} emails] {subject[:120]}",
+            })
+        return {
+            "path": "/threads",
+            "type": "directory",
+            "children": children,
+            "note": f"Showing top 200 of all threads by email count.",
+        }
+
+    elif path == "projects":
+        projects = _project_threads(graph)
+        children = []
+        for p in projects:
+            children.append({
+                "name": f"{p['thread_id']}.md",
+                "type": "file",
+                "path": f"/projects/{p['thread_id']}",
+                "summary": (
+                    f"[{p['email_count']} emails, {p['participant_count']} people, "
+                    f"last {p['latest_date'][:10]}] {p['subject'][:100]}"
+                ),
+            })
+        return {
+            "path": "/projects",
+            "type": "directory",
+            "children": children,
+            "note": "Projects are synthesized from email threads with >= 3 emails AND >= 2 participants.",
+        }
+
     return {"path": f"/{path}", "type": "directory", "children": []}

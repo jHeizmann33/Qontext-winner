@@ -40,6 +40,9 @@ from vfs_generator import (
     generate_customer_page,
     generate_team_page,
     generate_policy_page,
+    generate_thread_page,
+    generate_ticket_page,
+    generate_project_page,
     list_directory,
 )
 from retrieval import LocalHybridRetriever
@@ -85,6 +88,11 @@ SECTION_TO_TYPE: dict[str, str] = {
     "products": "Product",
     "it-tickets": "ITTicket",
     "policies": "Policy",
+    "threads": "EmailThread",
+    # /projects is a synthetic surface backed by EmailThread nodes too;
+    # edits/notes against /projects/{id} therefore target the underlying
+    # thread entity uniformly.
+    "projects": "EmailThread",
 }
 
 
@@ -172,15 +180,27 @@ def vfs_browse(path: str = ""):
             return {"path": f"/{path}", "type": "file", "format": "json", "content": node}
         
         elif section == "it-tickets":
-            node = get_node(GRAPH, f"ITTicket:{entity_id}")
-            if node is None:
+            content = generate_ticket_page(GRAPH, entity_id)
+            if content is None:
                 raise HTTPException(status_code=404, detail=f"Ticket {entity_id} not found")
-            return {"path": f"/{path}", "type": "file", "format": "json", "content": node}
+            return {"path": f"/{path}", "type": "file", "format": "markdown", "content": content}
 
         elif section == "policies":
             content = generate_policy_page(GRAPH, entity_id)
             if content is None:
                 raise HTTPException(status_code=404, detail=f"Policy {entity_id} not found")
+            return {"path": f"/{path}", "type": "file", "format": "markdown", "content": content}
+
+        elif section == "threads":
+            content = generate_thread_page(GRAPH, entity_id)
+            if content is None:
+                raise HTTPException(status_code=404, detail=f"Thread {entity_id} not found")
+            return {"path": f"/{path}", "type": "file", "format": "markdown", "content": content}
+
+        elif section == "projects":
+            content = generate_project_page(GRAPH, entity_id)
+            if content is None:
+                raise HTTPException(status_code=404, detail=f"Project {entity_id} not found")
             return {"path": f"/{path}", "type": "file", "format": "markdown", "content": content}
 
     # Directory paths
@@ -410,6 +430,19 @@ def edit_entity_property(section: str, entity_id: str, edit: EditRequest):
         field=edit.field,
         confidence=1.0,
     ))
+
+    # Record the change so the VFS "Recent updates" section shows the edit
+    # alongside source-driven property changes.
+    node.setdefault("change_log", []).append({
+        "field": edit.field,
+        "old_value": previous_value,
+        "new_value": edit.value,
+        "kind": "added" if previous_value is None else "updated",
+        "at": datetime.utcnow().isoformat(),
+        "source_system": "Human",
+        "source_record_id": edit.actor,
+        "reason": edit.reason,
+    })
 
     _persist_and_reindex()
 

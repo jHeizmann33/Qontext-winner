@@ -110,53 +110,77 @@ def add_node(
     Returns:
         The node_id (for chaining)
     """
+    now_iso = datetime.utcnow().isoformat()
     if graph.has_node(node_id):
         # Node exists — merge properties, detect conflicts
         existing = graph.nodes[node_id]
-        
+        change_log = existing.setdefault("change_log", [])
+
         for key, new_value in properties.items():
-            if key in existing.get("properties", {}) and existing["properties"][key] != new_value:
+            existing_props = existing.setdefault("properties", {})
+            if key in existing_props and existing_props[key] != new_value:
                 # Conflict detected — different value for same property
                 conflict = {
                     "entity_id": node_id,
                     "entity_type": node_type,
                     "field": key,
-                    "existing_value": existing["properties"][key],
+                    "existing_value": existing_props[key],
                     "new_value": new_value,
                     "existing_provenance": _find_provenance_for_field(existing, key),
                     "new_provenance": {**provenance, "field": key},
-                    "detected_at": datetime.utcnow().isoformat(),
+                    "detected_at": now_iso,
                     "resolution": None  # To be filled by auto-resolve or human review
                 }
-                
+
                 # Auto-resolve based on source authority
                 resolution = _try_auto_resolve(conflict)
                 if resolution:
                     conflict["resolution"] = resolution
                     if resolution["winner"] == "new":
-                        existing["properties"][key] = new_value
+                        # Actual value change → record in change_log so the
+                        # VFS can surface "Updated DD-MM: field X went from A to B"
+                        change_log.append({
+                            "field": key,
+                            "old_value": existing_props[key],
+                            "new_value": new_value,
+                            "kind": "updated",
+                            "at": now_iso,
+                            "source_system": provenance.get("source_system"),
+                            "source_record_id": provenance.get("record_id"),
+                            "reason": resolution.get("reason"),
+                        })
+                        existing_props[key] = new_value
                     # else: keep existing value
                 else:
                     # Queue for human review
                     conflict["resolution"] = {"status": "pending_review"}
-                
+
                 graph.graph["conflicts"].append(conflict)
-            else:
-                # No conflict — set the property
-                if "properties" not in existing:
-                    existing["properties"] = {}
-                existing["properties"][key] = new_value
-        
+            elif key not in existing_props:
+                # New property added on an existing node — also a change.
+                existing_props[key] = new_value
+                change_log.append({
+                    "field": key,
+                    "old_value": None,
+                    "new_value": new_value,
+                    "kind": "added",
+                    "at": now_iso,
+                    "source_system": provenance.get("source_system"),
+                    "source_record_id": provenance.get("record_id"),
+                })
+            # else: same value — no change, no log entry
+
         # Append provenance
         existing.setdefault("provenance", []).append(provenance)
     else:
         # New node
-        graph.add_node(node_id, 
+        graph.add_node(node_id,
             node_type=node_type,
             properties=properties,
-            provenance=[provenance]
+            provenance=[provenance],
+            change_log=[],
         )
-    
+
     return node_id
 
 
@@ -207,21 +231,34 @@ def _try_auto_resolve(conflict: dict) -> Optional[dict]:
     
     if not existing_prov or not new_prov:
         return None
-    
-    existing_authority = SOURCE_AUTHORITY.get(existing_prov.get("source_system", ""), 0)
-    new_authority = SOURCE_AUTHORITY.get(new_prov.get("source_system", ""), 0)
-    
+
+    existing_source = existing_prov.get("source_system", "")
+    new_source = new_prov.get("source_system", "")
+
+    # Same source touching the same fact = re-ingest of an updated record. The
+    # newer reading is the truth, otherwise property changes in source data
+    # would never propagate into the graph.
+    if existing_source and existing_source == new_source:
+        return {
+            "status": "auto_resolved",
+            "winner": "new",
+            "reason": f"Re-ingest from {existing_source} — newer reading wins"
+        }
+
+    existing_authority = SOURCE_AUTHORITY.get(existing_source, 0)
+    new_authority = SOURCE_AUTHORITY.get(new_source, 0)
+
     # Check if one source is canonical for this entity type
     entity_type = conflict.get("entity_type", "")
     for source, types in SOURCE_CANONICAL_FOR.items():
         if entity_type in types:
-            if existing_prov.get("source_system") == source:
+            if existing_source == source:
                 return {
                     "status": "auto_resolved",
                     "winner": "existing",
                     "reason": f"{source} is canonical for {entity_type} entities"
                 }
-            elif new_prov.get("source_system") == source:
+            elif new_source == source:
                 return {
                     "status": "auto_resolved",
                     "winner": "new",
@@ -307,7 +344,8 @@ def save_graph(graph: nx.MultiDiGraph, filepath: str) -> None:
             "id": node_id,
             "type": node_data.get("node_type", "Unknown"),
             "properties": node_data.get("properties", {}),
-            "provenance": node_data.get("provenance", [])
+            "provenance": node_data.get("provenance", []),
+            "change_log": node_data.get("change_log", []),
         })
     
     for source, target, key, edge_data in graph.edges(data=True, keys=True):
@@ -339,7 +377,8 @@ def load_graph(filepath: str) -> nx.MultiDiGraph:
         G.add_node(node["id"],
             node_type=node["type"],
             properties=node["properties"],
-            provenance=node["provenance"]
+            provenance=node["provenance"],
+            change_log=node.get("change_log", []),
         )
     
     for edge in data["edges"]:
