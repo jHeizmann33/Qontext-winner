@@ -10,6 +10,7 @@ import {
 } from "@/lib/review-data";
 import { useConflicts } from "@/lib/useConflicts";
 import { AvatarChip, Breadcrumb, DSButton, Kbd, SeverityBadge } from "@/components/ds";
+import { ConflictSourceCards } from "@/components/ConflictSourceCards";
 
 const VERDICT_COLOR: Record<Verdict, string> = {
   Reject: "text-coral",
@@ -459,8 +460,73 @@ export default function Review() {
             </div>
           </section>
 
-          {/* [2] DIFF BLOCK — hero of the page */}
+          {/* BLOCKED WORKFLOWS — kept above the cards per mockup order */}
           <section>
+            <div className="text-micro text-ink-faint">BLOCKED WORKFLOWS</div>
+            <div className="mt-3 space-y-1">
+              {item.pausedAgents.length === 0 ? (
+                <div className="text-meta text-ink-faint">
+                  No agents currently blocked on this conflict.
+                </div>
+              ) : (
+                item.pausedAgents.map((a) => (
+                  <div
+                    key={a.id}
+                    className="flex items-center justify-between py-1"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber" />
+                      <span className="text-meta text-ink">{a.id}</span>
+                      <span className="text-meta text-ink-muted">{a.task}</span>
+                    </div>
+                    <span className="text-micro text-ink-faint normal-case tracking-normal">
+                      paused {a.pausedFor}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="mt-3 text-meta text-ink-muted">{item.unblockSummary}</div>
+          </section>
+
+          {/* SOURCE CARDS — mockups_v2 scenario 2.
+              Mock data is hardcoded per the spec; the next iteration will
+              derive these from the selected ConflictItem so each conflict
+              shows its own source pair. */}
+          <ConflictSourceCards
+            sectionLabel="Conflict · clause 4.2 — total contract value"
+            anchor={{
+              doc_name: "MSA_signed.pdf",
+              doc_url: "/docs/MSA_Acme_2025_signed.pdf#L47",
+              metadata: ["14 Mar 2025", "12pp", "signed by JM", "clause 4.2 · p.4"],
+              field: "Amount",
+              value: "EUR 1,240,000",
+              snippet_loc: "p.4 · ln 47",
+              snippet_link: "/docs/MSA_Acme_2025_signed.pdf#L47",
+              snippet_text:
+                "…the Total Contract Value shall be {VALUE} payable over the initial term of 36 months in equal monthly instalments…",
+              highlight: "EUR 1,240,000.00",
+              audit_left: "ingested 14 Mar 09:42",
+              audit_right: "sys.primary",
+            }}
+            variant={{
+              doc_name: "amendment_v3.docx",
+              doc_url: "/docs/MSA_Acme_2025_amendment_v3.docx#L23",
+              metadata: ["02 Apr 2025", "4pp", "uploaded by MK", "clause 4.2 · p.4"],
+              field: "Amount",
+              value: "EUR 1,420,000",
+              snippet_loc: "p.4 · ln 23",
+              snippet_link: "/docs/MSA_Acme_2025_amendment_v3.docx#L23",
+              snippet_text:
+                "…the Revised Total Contract Value shall be {VALUE} payable in four equal quarterly instalments effective Q2 2025…",
+              highlight: "EUR 1,420,000.00",
+              audit_left: "uploaded 02 Apr 11:18",
+              audit_right: "Δ +EUR 180,000 · +14.5%",
+            }}
+          />
+
+          {/* === REMOVED below — replaced by ConflictSourceCards === */}
+          <section style={{ display: "none" }}>
             <div className="text-micro text-ink-faint mb-5">CONFLICT</div>
             <div className="space-y-10">
               {item.conflicts.map((field, idx) => {
@@ -571,67 +637,7 @@ export default function Review() {
               </ul>
             )}
           </section>
-
-          {/* [4] BLOCKED WORKFLOWS — context, below the diff */}
-          <section>
-            <div className="text-micro text-ink-faint">BLOCKED WORKFLOWS</div>
-            <div className="mt-3 space-y-1">
-              {item.pausedAgents.length === 0 ? (
-                <div className="text-meta text-ink-faint">
-                  No agents currently blocked on this conflict.
-                </div>
-              ) : (
-                item.pausedAgents.map((a) => (
-                  <div
-                    key={a.id}
-                    className="flex items-center justify-between py-1"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber" />
-                      <span className="text-meta text-ink">{a.id}</span>
-                      <span className="text-meta text-ink-muted">{a.task}</span>
-                    </div>
-                    <span className="text-micro text-ink-faint normal-case tracking-normal">
-                      paused {a.pausedFor}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-            <div className="mt-3 text-meta text-ink-muted">{item.unblockSummary}</div>
-          </section>
-
-          {/* AUDIT TRAIL — context */}
-          <section>
-            <div className="text-micro text-ink-faint inline-flex items-center gap-1.5">
-              <History className="w-3 h-3" /> AUDIT TRAIL
-            </div>
-            <div className="surface-nested p-5 mt-3">
-              <div className="grid grid-cols-[auto_auto_1fr] gap-x-6 gap-y-1.5">
-                {item.audit.map((e, i) => (
-                  <div key={i} className="contents">
-                    <span className="text-meta text-ink-muted">{e.ts}</span>
-                    <span className="text-meta text-ink">{e.actor}</span>
-                    <span className="text-meta text-ink-muted">{e.action}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          {/* [3] AI VERDICT — slim banner just above the action bar */}
-          <section className="border-t border-hairline pt-5">
-            <div className="flex items-baseline gap-3">
-              <span className="text-micro text-ink-faint">RECOMMEND</span>
-              <span className={`text-meta font-medium ${VERDICT_COLOR[item.verdict]}`}>
-                {item.verdict.toUpperCase()}
-              </span>
-              <span className="text-meta text-ink-muted">
-                · {Math.round(item.confidence * 100)}% confidence
-              </span>
-            </div>
-            <p className="text-meta text-ink-muted mt-2 max-w-3xl">{item.rationale}</p>
-          </section>
+          {/* === END removed sections === */}
 
           <div className="h-2" />
           </>)}
