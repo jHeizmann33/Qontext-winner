@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { OBJECTS, SCENARIOS, type ObjectType } from "@/lib/lens-data";
 import Graph3D from "@/components/Graph3D";
 import { AvatarChip, Breadcrumb, DSButton } from "@/components/ds";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import type { Verdict } from "@/lib/review-data";
 
 interface LensNavState {
@@ -37,16 +38,25 @@ export default function Lens() {
   const navigate = useNavigate();
   const navState = location.state as LensNavState | null;
 
-  // Hooks must run before any early return — keep them above the redirect.
+  // Hooks must run before any early return.
   const [scenarioId, setScenarioId] = useState<string>(SCENARIOS[0].id);
   const scenario = useMemo(
     () => SCENARIOS.find((s) => s.id === scenarioId) ?? SCENARIOS[0],
     [scenarioId]
   );
-  const [focusId, setFocusId] = useState<string>(navState?.focusId ?? scenario.focusId);
+  const initialFocus = navState?.focusId ?? scenario.focusId;
+  const [focusId, setFocusId] = useState<string>(initialFocus);
   const [query, setQuery] = useState<string>(scenario.query);
 
+  // Don't reset focusId on the initial mount — only on actual scenario
+  // switches. Previously this useEffect overrode the navState.focusId
+  // immediately, sending the user to the wrong node.
+  const didMountRef = useRef(false);
   useEffect(() => {
+    if (!didMountRef.current) {
+      didMountRef.current = true;
+      return;
+    }
     setFocusId(scenario.focusId);
     setQuery(scenario.query);
   }, [scenarioId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -61,7 +71,8 @@ export default function Lens() {
     return <Navigate to="/" replace />;
   }
 
-  const focusObject = OBJECTS[focusId] ?? OBJECTS[scenario.focusId];
+  const focusObject =
+    OBJECTS[focusId] ?? OBJECTS[scenario.focusId] ?? OBJECTS[SCENARIOS[0].focusId];
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg text-ink">
@@ -133,14 +144,16 @@ export default function Lens() {
             [LENS] / [{scenario.name.toUpperCase()}] / [FOCUS:{focusId}]
           </div>
 
-          <Graph3D
-            focusId={focusId}
-            scenarioForeground={scenario.foregroundNodeIds}
-            onSelect={setFocusId}
-            verdict={navState.verdict}
-            conflictId={navState.conflictId}
-            focusFromConflict={navState.focusId}
-          />
+          <ErrorBoundary label="3D scene crashed">
+            <Graph3D
+              focusId={focusId}
+              scenarioForeground={scenario.foregroundNodeIds}
+              onSelect={setFocusId}
+              verdict={navState.verdict}
+              conflictId={navState.conflictId}
+              focusFromConflict={navState.focusId}
+            />
+          </ErrorBoundary>
 
           {/* Results panel */}
           <div className="absolute bottom-5 left-5 w-[300px] z-10">
